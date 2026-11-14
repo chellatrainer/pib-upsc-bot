@@ -4,7 +4,7 @@ Daily PIB -> UPSC digest -> Telegram.
 Env vars required:
   GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 Optional:
-  GEMINI_MODEL (default gemini-2.5-flash), MAX_ITEMS (default 25), LOOKBACK_HOURS (default 30)
+  GEMINI_MODEL (optional; default tries several free models), MAX_ITEMS (default 25), LOOKBACK_HOURS (default 30)
 """
 import os
 import time
@@ -19,7 +19,10 @@ from bs4 import BeautifulSoup
 PIB_RSS = "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PIB-UPSC-Digest/1.0)"}
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Tries models in order; moves to the next one if a model returns 404 (retired/renamed)
+_env_model = os.getenv("GEMINI_MODEL")
+MODELS = [_env_model] if _env_model else [
+    "gemini-3.8-flash", "gemini-4-hydrogen", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
 MAX_ITEMS = int(os.getenv("MAX_ITEMS", "25"))
 LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "30"))
 
@@ -72,22 +75,32 @@ def article_text(url, limit=2500):
 
 def summarise(releases_text):
     # Free tier via Google AI Studio key (https://aistudio.google.com/apikey)
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{MODEL}:generateContent")
     body = {
         "contents": [{"parts": [{"text": PROMPT.format(releases=releases_text)}]}],
-        "generationConfig": {"maxOutputTokens": 8000, "temperature": 0.3},
+        "generationConfig": {"maxOutputTokens": 16000, "temperature": 0.3},
     }
-    for attempt in range(3):
-        r = requests.post(url, json=body, timeout=120,
-                          headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]})
-        if r.status_code == 429:  # free-tier rate limit: wait and retry
-            time.sleep(30 * (attempt + 1))
+    headers = {"x-goog-api-key": os.environ["GEMINI_API_KEY"]}
+    last_err = None
+    for model in MODELS:
+        url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{model}:generateContent")
+        for attempt in range(3):
+            r = requests.post(url, json=body, timeout=180, headers=headers)
+            if r.status_code == 429:  # free-tier rate limit: wait and retry
+                time.sleep(30 * (attempt + 1))
+                continue
+            break
+        if r.status_code == 404:
+            print(f"Model {model} not found, trying next...")
+            last_err = r.text
             continue
-        r.raise_for_status()
+        if not r.ok:
+            raise RuntimeError(f"Gemini error {r.status_code}: {r.text[:500]}")
         parts = r.json()["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts)
-    raise RuntimeError("Gemini rate limit hit repeatedly")
+        text = "".join(p.get("text", "") for p in parts)
+        print(f"Used model: {model}")
+        return text
+    raise RuntimeError(f"No Gemini model worked. Last error: {last_err}")
 
 
 def send_telegram(text):
