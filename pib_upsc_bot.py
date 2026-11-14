@@ -4,7 +4,7 @@ Daily PIB -> UPSC digest -> Telegram.
 Env vars required:
   GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 Optional:
-  GEMINI_MODEL (optional; default tries several free models), MAX_ITEMS (default 25), LOOKBACK_HOURS (default 30)
+  GEMINI_MODEL (optional; default tries several free models), MAX_ITEMS (default 15), LOOKBACK_HOURS (default 30)
 """
 import os
 import time
@@ -23,7 +23,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PIB-UPSC-Digest/1.0)"}
 _env_model = os.getenv("GEMINI_MODEL")
 MODELS = [_env_model] if _env_model else [
     "gemini-3.8-flash", "gemini-4-hydrogen", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite"]
-MAX_ITEMS = int(os.getenv("MAX_ITEMS", "25"))
+MAX_ITEMS = int(os.getenv("MAX_ITEMS", "15"))
 LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "30"))
 
 PROMPT = """You are a UPSC Civil Services mentor. Below are today's PIB (Press Information Bureau) releases.
@@ -62,7 +62,7 @@ def recent_entries():
     return out[:MAX_ITEMS]
 
 
-def article_text(url, limit=2500):
+def article_text(url, limit=1800):
     try:
         r = requests.get(url, headers=HEADERS, timeout=30)
         soup = BeautifulSoup(r.text, "html.parser")
@@ -87,7 +87,7 @@ def summarise(releases_text):
         r = None
         for attempt in range(5):
             try:
-                r = requests.post(url, json=body, timeout=180, headers=headers)
+                r = requests.post(url, json=body, timeout=300, headers=headers)
             except requests.RequestException as ex:
                 last_err = str(ex)
                 time.sleep(20 * (attempt + 1))
