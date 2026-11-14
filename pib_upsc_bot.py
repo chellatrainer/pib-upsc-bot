@@ -84,15 +84,25 @@ def summarise(releases_text):
     for model in MODELS:
         url = ("https://generativelanguage.googleapis.com/v1beta/models/"
                f"{model}:generateContent")
-        for attempt in range(3):
-            r = requests.post(url, json=body, timeout=180, headers=headers)
-            if r.status_code == 429:  # free-tier rate limit: wait and retry
-                time.sleep(30 * (attempt + 1))
+        r = None
+        for attempt in range(5):
+            try:
+                r = requests.post(url, json=body, timeout=180, headers=headers)
+            except requests.RequestException as ex:
+                last_err = str(ex)
+                time.sleep(20 * (attempt + 1))
+                continue
+            # temporary problems: rate limit / overloaded -> wait and retry
+            if r.status_code in (429, 500, 502, 503, 504):
+                last_err = f"{model}: {r.status_code} {r.text[:200]}"
+                print(f"{model} busy ({r.status_code}), retry {attempt + 1}/5")
+                time.sleep(20 * (attempt + 1))
                 continue
             break
-        if r.status_code == 404:
-            print(f"Model {model} not found, trying next...")
-            last_err = r.text
+        if r is None or r.status_code in (404, 429, 500, 502, 503, 504):
+            print(f"Skipping {model}, trying next model...")
+            if r is not None:
+                last_err = f"{model}: {r.status_code} {r.text[:200]}"
             continue
         if not r.ok:
             raise RuntimeError(f"Gemini error {r.status_code}: {r.text[:500]}")
